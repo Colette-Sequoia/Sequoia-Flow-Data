@@ -4,8 +4,10 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --timeout 600 --workers 1 --worker-class sync --max-requests 10 --max-requests-jitter 5
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.7
+      - key: PYTHONUNBUFFERED
+        value: "1"
     healthCheckPath: /health

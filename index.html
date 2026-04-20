@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flows Data Processor</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState } = React;
+
+        function FlowsProcessor() {
+            const [files, setFiles] = useState({
+                returns: null,
+                currentAUM: null,
+                currentFlows: null,
+                previousFlows: null,
+                gla: null
+            });
+            const [processing, setProcessing] = useState(false);
+            const [status, setStatus] = useState('');
+            const [error, setError] = useState('');
+            const [results, setResults] = useState(null);
+            
+            // API URL - works both locally and on Render
+            const API_URL = window.location.hostname === 'localhost' 
+                ? 'http://localhost:5000'
+                : window.location.origin;
+
+            const fileConfig = [
+                { key: 'returns', label: 'Returns File (Current Month)', desc: 'Contains monthly returns percentages' },
+                { key: 'currentAUM', label: 'AUM File (Current Month)', desc: 'FINAL sheet with current AUM data' },
+                { key: 'currentFlows', label: 'Flows Template (Current Month)', desc: 'Template for calculations' },
+                { key: 'previousFlows', label: 'Flows File (Previous Month)', desc: 'Previous month Worksheet' },
+                { key: 'gla', label: 'GLA File', desc: 'AUA and Flows for Life Pool' }
+            ];
+
+            const handleFileChange = (key, file) => {
+                if (file && file.name.match(/\.(xlsx|xls)$/i)) {
+                    setFiles(prev => ({ ...prev, [key]: file }));
+                    setError('');
+                } else {
+                    setError('Please upload valid Excel files (.xlsx or .xls)');
+                }
+            };
+
+            const processFiles = async () => {
+                const missingFiles = fileConfig.filter(f => !files[f.key]);
+                if (missingFiles.length > 0) {
+                    setError(`Missing files: ${missingFiles.map(f => f.label).join(', ')}`);
+                    return;
+                }
+
+                setProcessing(true);
+                setStatus('Uploading files...');
+                setError('');
+                setResults(null);
+
+                try {
+                    const formData = new FormData();
+                    Object.entries(files).forEach(([key, file]) => {
+                        formData.append(key, file);
+                    });
+
+                    setStatus('Processing flows data...');
+                    
+                    const response = await fetch(`${API_URL}/process`, {
+                        method: 'POST',
+                        body: formData,
+                        mode: 'cors'
+                    });
+
+                    if (!response.ok) {
+                        let errorMsg = 'Processing failed';
+                        try {
+                            const errorData = await response.json();
+                            errorMsg = errorData.error || errorMsg;
+                        } catch (e) {
+                            errorMsg = `Server error: ${response.status} ${response.statusText}`;
+                        }
+                        throw new Error(errorMsg);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setResults(data.summary);
+                        setStatus('✓ Processing complete!');
+                    } else {
+                        throw new Error(data.error || 'Processing failed');
+                    }
+
+                } catch (err) {
+                    let errorMessage = err.message;
+                    
+                    if (err.message === 'Failed to fetch') {
+                        errorMessage = 'Cannot connect to server. Make sure the Flask server is running on http://localhost:5000';
+                    }
+                    
+                    setError(`Error: ${errorMessage}`);
+                    setStatus('');
+                } finally {
+                    setProcessing(false);
+                }
+            };
+
+            const downloadFile = async () => {
+                try {
+                    setStatus('Downloading file...');
+                    const response = await fetch(`${API_URL}/download`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Download failed');
+                    }
+                    
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'Flows_Final.xlsx';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                    
+                    setStatus('✓ File downloaded successfully!');
+                    
+                    setTimeout(() => {
+                        setStatus('');
+                        setResults(null);
+                        setFiles({
+                            returns: null,
+                            currentAUM: null,
+                            currentFlows: null,
+                            previousFlows: null,
+                            gla: null
+                        });
+                    }, 3000);
+                } catch (err) {
+                    setError(`Download error: ${err.message}`);
+                }
+            };
+
+            const allFilesUploaded = fileConfig.every(f => files[f.key]);
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6">
+                    <div className="max-w-4xl mx-auto">
+                        
+                        {/* Header */}
+                        <div className="mb-10 text-center">
+                            <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-3xl mb-5 shadow-2xl">
+                                <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                            </div>
+                            <h1 className="text-5xl font-bold bg-gradient-to-r from-white via-blue-100 to-violet-200 bg-clip-text text-transparent mb-3">
+                                Flows Data Processor
+                            </h1>
+                            <p className="text-lg text-slate-400">
+                                Automated monthly flows calculation and report generation
+                            </p>
+                        </div>
+
+                        {/* File Upload Grid */}
+                        <div className="space-y-4 mb-8">
+                            {fileConfig.map((config) => {
+                                const isUploaded = files[config.key];
+                                
+                                return (
+                                    <div key={config.key} 
+                                         className={`relative bg-slate-800/50 backdrop-blur border-2 rounded-2xl p-5 transition-all duration-300 ${
+                                             isUploaded 
+                                                 ? 'border-emerald-500/50 shadow-lg shadow-emerald-500/20' 
+                                                 : 'border-slate-700/50 hover:border-slate-600'
+                                         }`}>
+                                        
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex-1">
+                                                <h3 className="text-sm font-bold text-white mb-1">{config.label}</h3>
+                                                <p className="text-xs text-slate-400 mb-2">{config.desc}</p>
+                                                
+                                                {isUploaded && (
+                                                    <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-950/50 px-3 py-2 rounded-lg border border-emerald-500/30 inline-flex">
+                                                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                                        </svg>
+                                                        <span className="truncate max-w-xs">{files[config.key].name}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            
+                                            <label className="cursor-pointer">
+                                                <input
+                                                    type="file"
+                                                    accept=".xlsx,.xls"
+                                                    onChange={(e) => handleFileChange(config.key, e.target.files[0])}
+                                                    className="hidden"
+                                                />
+                                                <div className="px-4 py-2 bg-gradient-to-r from-slate-700 to-slate-600 hover:from-slate-600 hover:to-slate-500 text-white rounded-lg transition-all text-sm font-medium text-center shadow-lg">
+                                                    {isUploaded ? 'Change' : 'Choose File'}
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Status/Error Messages */}
+                        {error && (
+                            <div className="bg-red-950/50 border-2 border-red-500/50 rounded-2xl p-5 mb-6 flex items-start gap-4">
+                                <svg className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                </svg>
+                                <div>
+                                    <p className="text-red-200 font-semibold mb-1">Error</p>
+                                    <p className="text-red-300 text-sm">{error}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {status && !error && (
+                            <div className="bg-blue-950/50 border-2 border-blue-500/50 rounded-2xl p-5 mb-6 flex items-start gap-4">
+                                {processing ? (
+                                    <svg className="w-6 h-6 text-blue-400 flex-shrink-0 mt-0.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                ) : (
+                                    <svg className="w-6 h-6 text-blue-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                    </svg>
+                                )}
+                                <div className="flex-1">
+                                    <p className="text-blue-200 font-semibold mb-1">
+                                        {processing ? 'Processing' : 'Complete'}
+                                    </p>
+                                    <p className="text-blue-300 text-sm">{status}</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Results Summary */}
+                        {results && (
+                            <div className="bg-gradient-to-br from-emerald-950/50 to-teal-950/50 border-2 border-emerald-500/50 rounded-2xl p-6 mb-6">
+                                <h3 className="text-emerald-300 font-bold text-xl mb-4 flex items-center gap-2">
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                    </svg>
+                                    Processing Complete - Summary
+                                </h3>
+                                
+                                {/* Overall Stats */}
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                                    <div className="bg-slate-900/50 rounded-xl p-4 border border-emerald-500/20">
+                                        <div className="text-3xl font-bold text-emerald-400 mb-1">
+                                            R{results.total_netflows.toLocaleString('en-ZA', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                        </div>
+                                        <div className="text-xs text-slate-400">Total NetFlows</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded-xl p-4 border border-emerald-500/20">
+                                        <div className="text-3xl font-bold text-emerald-400 mb-1">{results.total_rows}</div>
+                                        <div className="text-xs text-slate-400">Total Records</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded-xl p-4 border border-emerald-500/20">
+                                        <div className="text-3xl font-bold text-emerald-400 mb-1">{results.calculated_rows}</div>
+                                        <div className="text-xs text-slate-400">Calculated Flows</div>
+                                    </div>
+                                </div>
+
+                                {/* NetFlows by LISP */}
+                                <div className="bg-slate-900/30 rounded-xl p-4 border border-emerald-500/20">
+                                    <h4 className="text-emerald-300 font-semibold mb-3 text-sm">NetFlows by LISP</h4>
+                                    <div className="space-y-2">
+                                        {Object.entries(results.by_lisp)
+                                            .sort((a, b) => b[1].netflows - a[1].netflows)
+                                            .map(([lisp, data]) => (
+                                                <div key={lisp} className="flex items-center justify-between py-2 border-b border-slate-700/50 last:border-0">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-2 h-2 rounded-full ${data.netflows >= 0 ? 'bg-emerald-400' : 'bg-red-400'}`}></div>
+                                                        <span className="text-slate-300 font-medium text-sm">{lisp}</span>
+                                                        <span className="text-slate-500 text-xs">({data.count} records)</span>
+                                                    </div>
+                                                    <span className={`font-mono font-semibold text-sm ${data.netflows >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                        R{data.netflows.toLocaleString('en-ZA', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Process/Download Buttons */}
+                        <div className="flex flex-col sm:flex-row justify-center gap-4 mb-10">
+                            {!results ? (
+                                <button
+                                    onClick={processFiles}
+                                    disabled={!allFilesUploaded || processing}
+                                    className="px-8 py-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:from-slate-700 disabled:to-slate-600 text-white rounded-xl transition-all text-lg font-bold shadow-2xl disabled:shadow-none transform hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                                >
+                                    {processing ? (
+                                        <>
+                                            <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            Processing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                            </svg>
+                                            Process & Generate
+                                        </>
+                                    )}
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={downloadFile}
+                                    className="px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl transition-all text-lg font-bold shadow-2xl transform hover:scale-105 flex items-center justify-center gap-3"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                    Download Excel File
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Info Panel */}
+                        <div className="bg-slate-800/30 backdrop-blur border border-slate-700/50 rounded-2xl p-6">
+                            <h3 className="text-slate-300 font-bold mb-4">Processing Steps:</h3>
+                            <ol className="space-y-2 text-sm text-slate-400">
+                                <li>• Extract performance from template Performance sheet</li>
+                                <li>• Map GLA data using AUM broker and fund mappings</li>
+                                <li>• Remove Life Pool from AUM, replace with mapped GLA data</li>
+                                <li>• Calculate NetFlows for Allan Gray/Ninety One/Stanlib Models + Investec Note</li>
+                                <li>• Copy flows directly for all other LISPs and products</li>
+                                <li>• Generate downloadable Excel file with all calculations</li>
+                            </ol>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<FlowsProcessor />, document.getElementById('root'));
+    </script>
+</body>
+</html>

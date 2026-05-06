@@ -283,7 +283,7 @@ def process_flows_data(returns_file, current_aum_file, current_flows_file, previ
         
         # 7. Load template for writing
         print("Loading template workbook...")
-        flows_wb = openpyxl.load_workbook(current_flows_file, write_only=False)
+        flows_wb = openpyxl.load_workbook(current_flows_file)
         
         # 8. Keep Performance sheet
         perf_sheet = flows_wb['Performance']
@@ -395,34 +395,7 @@ def process_flows_data(returns_file, current_aum_file, current_flows_file, previ
         gc.collect()
         print("Workbook saved")
         
-        # Calculate summary statistics - read back to avoid keeping workbook in memory
-        print("Calculating summary...")
-        final_df = pd.read_excel(output_file, sheet_name='Final')
-        
-        summary = {
-            'total_netflows': float(final_df['NetFlows (R)'].sum()),
-            'total_rows': len(final_df),
-            'by_lisp': {},
-            'calculated_rows': int(calculated_count),
-            'copied_rows': len(combined_aum) - int(calculated_count)
-        }
-        
-        # Calculate by LISP
-        lisp_summary = final_df.groupby('LISP').agg({
-            'NetFlows (R)': 'sum',
-            'LISP': 'count'
-        }).rename(columns={'LISP': 'count'})
-        
-        for lisp, row in lisp_summary.iterrows():
-            summary['by_lisp'][lisp] = {
-                'netflows': float(row['NetFlows (R)']),
-                'count': int(row['count'])
-            }
-        
-        del final_df, lisp_summary
-        gc.collect()
-        
-        # Calculate formulas manually
+        # Calculate formulas manually FIRST
         print("Resolving formulas...")
         wb = openpyxl.load_workbook(output_file)
         worksheet = wb['Worksheet']
@@ -432,6 +405,10 @@ def process_flows_data(returns_file, current_aum_file, current_flows_file, previ
         perf_lookup = {r[0].value: r[1].value for r in perf_sheet.iter_rows(min_row=2, max_row=100) if r[0].value}
         prev_aum_lookup = {r[0].value: r[7].value for r in prev_aum_sheet.iter_rows(min_row=2, max_row=1000) if r[0].value}
         
+        print(f"  Performance lookup has {len(perf_lookup)} funds")
+        print(f"  Previous AUM lookup has {len(prev_aum_lookup)} records")
+        
+        formulas_resolved = 0
         for row_num in range(2, worksheet.max_row + 1):
             s_cell = worksheet[f'S{row_num}']
             if isinstance(s_cell.value, str) and s_cell.value.startswith('='):
@@ -453,16 +430,70 @@ def process_flows_data(returns_file, current_aum_file, current_flows_file, previ
                     worksheet[f'P{row_num}'].value = perf
                     worksheet[f'Q{row_num}'].value = prev
                     worksheet[f'R{row_num}'].value = adj
+                    formulas_resolved += 1
+        
+        print(f"  Resolved {formulas_resolved} formulas")
         
         final_sheet = wb['Final']
+        final_formulas_resolved = 0
         for row_num in range(2, final_sheet.max_row + 1):
             k = final_sheet[f'K{row_num}']
             if isinstance(k.value, str) and '=Worksheet!' in k.value:
                 final_sheet[f'K{row_num}'].value = worksheet[f'S{row_num}'].value
+                final_formulas_resolved += 1
+        
+        print(f"  Resolved {final_formulas_resolved} formulas in Final sheet")
         
         wb.save(output_file)
         wb.close()
-        del wb, combined_aum
+        del wb
+        gc.collect()
+        print("Formulas resolved and saved")
+        
+        # NOW calculate summary statistics - Re-open the file to ensure we get calculated values
+        print("Calculating summary from resolved file...")
+        
+        # Use data_only=True to read calculated values, not formulas
+        final_wb = openpyxl.load_workbook(output_file, data_only=True)
+        final_sheet = final_wb['Final']
+        
+        # Read directly from workbook to ensure we get numbers
+        summary_data = []
+        for row in final_sheet.iter_rows(min_row=2, max_row=final_sheet.max_row, values_only=True):
+            if row[0] is not None:  # Has data
+                summary_data.append({
+                    'LISP': row[6],
+                    'NetFlows': row[10] if isinstance(row[10], (int, float)) else 0
+                })
+        
+        final_wb.close()
+        del final_wb
+        gc.collect()
+        
+        # Calculate summary from the data we just read
+        summary_df = pd.DataFrame(summary_data)
+        
+        summary = {
+            'total_netflows': float(summary_df['NetFlows'].sum()),
+            'total_rows': len(summary_df),
+            'by_lisp': {},
+            'calculated_rows': int(calculated_count),
+            'copied_rows': len(combined_aum) - int(calculated_count)
+        }
+        
+        # Calculate by LISP
+        lisp_summary = summary_df.groupby('LISP').agg({
+            'NetFlows': 'sum',
+            'LISP': 'count'
+        }).rename(columns={'LISP': 'count'})
+        
+        for lisp, row in lisp_summary.iterrows():
+            summary['by_lisp'][lisp] = {
+                'netflows': float(row['NetFlows']),
+                'count': int(row['count'])
+            }
+        
+        del summary_df, lisp_summary, combined_aum
         gc.collect()
         
         print("=== Processing complete ===")
